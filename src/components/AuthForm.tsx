@@ -13,7 +13,7 @@ import { Logo } from "./Logo";
 
 const schema = z.object({
   email: z.string().min(1, "Ingresa tu correo").email("Correo no válido"),
-  password: z.string().min(8, "Mínimo 8 caracteres"),
+  password: z.string().min(8, "Mínimo 8 caracteres").max(72, "Máximo 72 caracteres"),
 });
 type FormData = z.infer<typeof schema>;
 

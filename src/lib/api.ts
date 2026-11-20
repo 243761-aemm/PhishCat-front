@@ -1,17 +1,19 @@
 import axios, { AxiosError, AxiosResponse } from "axios";
 import { useAuth } from "@/store/auth";
-import type { EmailAuth, EmailMetadata, EmbeddedUrl, EngineStats, RiskLevel, ScanResult } from "./types";
+import type { EngineStats, RiskLevel, ScanDetails, ScanResult, ScanType } from "./types";
 
 /**
- * MODO DEMO: simula el backend en el navegador (sin servidor).
- * Para conectar el backend real, agrega en .env.local:
- *   NEXT_PUBLIC_USE_MOCK=false
+ * Por defecto se conecta al backend real.
+ * Para volver al modo demo (sin servidor) agrega en .env.local:  NEXT_PUBLIC_USE_MOCK=true
  */
-const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
+const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
 export const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1",
+  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "https://phishcatchback-production.up.railway.app/api/v1",
 });
+
+// El análisis consulta VirusTotal (con sondeo) y Google: puede tardar. Sin límite de 120 s.
+const SCAN_TIMEOUT = 120_000;
 
 // Inyecta el JWT en cada petición privada
 api.interceptors.request.use((config) => {
@@ -35,11 +37,30 @@ api.interceptors.response.use(
 
 export function getErrorMessage(error: unknown, fallback = "Algo salió mal. Inténtalo de nuevo."): string {
   if (axios.isAxiosError(error)) {
-    if (!error.response) return "No se pudo conectar con el servidor.";
+    if (error.code === "ECONNABORTED") return "El análisis tardó demasiado. Inténtalo de nuevo.";
+    if (!error.response) return "No se pudo conectar con el servidor. Revisa tu conexión o inténtalo en unos minutos.";
     const detail = error.response.data?.detail;
     if (typeof detail === "string") return detail;
+    // 422 de FastAPI: detail es una lista de errores de validación
+    if (Array.isArray(detail)) return "Los datos enviados no son válidos. Revisa e inténtalo de nuevo.";
+    if (error.response.status === 413) return "El archivo excede el tamaño máximo de 10 MB.";
   }
   return fallback;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Normalización de respuestas del backend                            */
+/* ------------------------------------------------------------------ */
+
+const KNOWN_RISK: RiskLevel[] = ["safe", "suspicious", "malicious"];
+
+/** scan_type "file" -> "email"; risk_level desconocido (error / unknown / pending) -> "error" */
+function normalize(r: ScanResult): ScanResult {
+  return {
+    ...r,
+    scan_type: ((r.scan_type as string) === "file" ? "email" : r.scan_type) as ScanType,
+    risk_level: KNOWN_RISK.includes(r.risk_level) ? r.risk_level : "error",
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -121,35 +142,51 @@ const MOCK_STATS: Record<RiskLevel, EngineStats> = {
   malicious: { malicious: 8, suspicious: 3, harmless: 61, undetected: 18 },
   suspicious: { malicious: 0, suspicious: 4, harmless: 58, undetected: 28 },
   safe: { malicious: 0, suspicious: 0, harmless: 72, undetected: 18 },
+  error: { malicious: 0, suspicious: 0, harmless: 0, undetected: 0 },
 };
 
-const MOCK_EMAIL: Record<RiskLevel, { metadata: EmailMetadata; authentication: EmailAuth; urls_details: EmbeddedUrl[] }> = {
+// Google Safe Browsing con el mismo formato que el backend
+const mockGoogle = (risk: RiskLevel): ScanDetails["google"] =>
+  risk === "malicious"
+    ? { risk_level: "malicious", threat_types: ["SOCIAL_ENGINEERING"], details: { matches: [{ threatType: "SOCIAL_ENGINEERING" }] } }
+    : { risk_level: "safe", details: { status: "clean", matches: [] } };
+
+const mockUrlDetails = (risk: RiskLevel): ScanDetails => ({
+  virustotal: { risk_level: risk, stats: MOCK_STATS[risk] },
+  google: mockGoogle(risk),
+});
+
+const MOCK_EMAIL: Record<RiskLevel, ScanDetails> = {
   malicious: {
-    metadata: { from: "PayPal Soporte <soporte@paypal.com>", to: "usuario@correo.com", subject: "Urgente: verifica tu cuenta en las próximas 24 horas", date: "Mié, 28 oct 2026 09:14 (UTC−6)", return_path: "mailer@srv-4821.xyz" },
-    authentication: { spf: "fail", dkim: "fail", dmarc: "fail" },
+    metadata: { from: "PayPal Soporte <soporte@paypal.com>", to: "usuario@correo.com", subject: "Urgente: verifica tu cuenta en las próximas 24 horas", date: "Wed, 28 Oct 2026 09:14:00 -0600", return_path: "<mailer@srv-4821.xyz>" },
+    security_headers: { spf: "fail", dkim: "fail", dmarc: "fail" },
+    urls_found: 3, urls_scanned: 3,
     urls_details: [
-      { url: "https://paypal-secure-login.xyz/verify?id=48213", risk_level: "malicious", malicious_count: 8 },
-      { url: "https://bit.ly/3xYz9Qk", risk_level: "suspicious", malicious_count: 2 },
-      { url: "https://www.paypal.com/help", risk_level: "safe", malicious_count: 0 },
+      { url: "https://paypal-secure-login.xyz/verify?id=48213", risk_level: "malicious", details: mockUrlDetails("malicious") },
+      { url: "https://bit.ly/3xYz9Qk", risk_level: "suspicious", details: mockUrlDetails("suspicious") },
+      { url: "https://www.paypal.com/help", risk_level: "safe", details: mockUrlDetails("safe") },
     ],
   },
   suspicious: {
-    metadata: { from: "Ofertas Tienda <promo@promos-ofertas.top>", to: "usuario@correo.com", subject: "Solo hoy: 70% de descuento en toda la tienda", date: "Mié, 28 oct 2026 09:14 (UTC−6)", return_path: "promo@promos-ofertas.top" },
-    authentication: { spf: "none", dkim: "pass", dmarc: "none" },
+    metadata: { from: "Ofertas Tienda <promo@promos-ofertas.top>", to: "usuario@correo.com", subject: "Solo hoy: 70% de descuento en toda la tienda", date: "Wed, 28 Oct 2026 09:14:00 -0600", return_path: "<promo@promos-ofertas.top>" },
+    security_headers: { spf: "none", dkim: "pass", dmarc: "none" },
+    urls_found: 3, urls_scanned: 3,
     urls_details: [
-      { url: "http://tracking.promos-ofertas.top/click?ref=a81", risk_level: "suspicious", malicious_count: 3 },
-      { url: "https://www.tienda.com/ofertas", risk_level: "safe", malicious_count: 0 },
-      { url: "https://bit.ly/4abCdEf", risk_level: "suspicious", malicious_count: 1 },
+      { url: "http://tracking.promos-ofertas.top/click?ref=a81", risk_level: "suspicious", details: mockUrlDetails("suspicious") },
+      { url: "https://www.tienda.com/ofertas", risk_level: "safe", details: mockUrlDetails("safe") },
+      { url: "https://bit.ly/4abCdEf", risk_level: "suspicious", details: mockUrlDetails("suspicious") },
     ],
   },
   safe: {
-    metadata: { from: "Banco Ejemplo <avisos@bancoejemplo.com>", to: "usuario@correo.com", subject: "Tu estado de cuenta de octubre ya está disponible", date: "Mié, 28 oct 2026 09:14 (UTC−6)", return_path: "avisos@bancoejemplo.com" },
-    authentication: { spf: "pass", dkim: "pass", dmarc: "pass" },
+    metadata: { from: "Banco Ejemplo <avisos@bancoejemplo.com>", to: "usuario@correo.com", subject: "Tu estado de cuenta de octubre ya está disponible", date: "Wed, 28 Oct 2026 09:14:00 -0600", return_path: "<avisos@bancoejemplo.com>" },
+    security_headers: { spf: "pass", dkim: "pass", dmarc: "pass" },
+    urls_found: 2, urls_scanned: 2,
     urls_details: [
-      { url: "https://www.bancoejemplo.com/estado-cuenta", risk_level: "safe", malicious_count: 0 },
-      { url: "https://www.bancoejemplo.com/ayuda", risk_level: "safe", malicious_count: 0 },
+      { url: "https://www.bancoejemplo.com/estado-cuenta", risk_level: "safe", details: mockUrlDetails("safe") },
+      { url: "https://www.bancoejemplo.com/ayuda", risk_level: "safe", details: mockUrlDetails("safe") },
     ],
   },
+  error: { urls_details: [] },
 };
 
 /* ------------------------------------------------------------------ */
@@ -185,30 +222,22 @@ export async function scanUrl(url: string) {
   if (USE_MOCK) {
     await sleep(2000);
     const risk = judgeUrl(url);
-    return saveToHistory({ target: url, scan_type: "url", risk_level: risk, stats: MOCK_STATS[risk] });
+    return saveToHistory({ target: url, scan_type: "url", risk_level: risk, details: mockUrlDetails(risk) });
   }
-  const { data } = await api.post<ScanResult>("/scan/url", { url });
-  return data;
+  const { data } = await api.post<ScanResult>("/scan/url", { url }, { timeout: SCAN_TIMEOUT });
+  return normalize(data);
 }
 
 export async function scanEmail(file: File) {
   if (USE_MOCK) {
     await sleep(2000);
     const risk = judgeFile(file.name);
-    const m = MOCK_EMAIL[risk];
-    return saveToHistory({
-      target: file.name,
-      scan_type: "email",
-      risk_level: risk,
-      metadata: m.metadata,
-      authentication: m.authentication,
-      urls_details: m.urls_details,
-    });
+    return saveToHistory({ target: file.name, scan_type: "email", risk_level: risk, details: MOCK_EMAIL[risk] });
   }
   const form = new FormData();
   form.append("file", file);
-  const { data } = await api.post<ScanResult>("/scan/email", form);
-  return data;
+  const { data } = await api.post<ScanResult>("/scan/email", form, { timeout: SCAN_TIMEOUT });
+  return normalize(data);
 }
 
 export async function getHistory() {
@@ -216,6 +245,8 @@ export async function getHistory() {
     await sleep(600);
     return getMockHistory();
   }
-  const { data } = await api.get<ScanResult[]>("/history");
-  return data;
+  // OJO: con barra final. Sin ella FastAPI responde 307 y detrás del proxy de Railway
+  // la redirección puede apuntar a http:// y el navegador la bloquea.
+  const { data } = await api.get<ScanResult[]>("/history/", { params: { limit: 100 } });
+  return data.map(normalize);
 }

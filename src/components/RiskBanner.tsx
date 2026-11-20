@@ -1,16 +1,18 @@
-import { AlertTriangle, ShieldAlert, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CircleHelp, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { RiskLevel } from "@/lib/types";
 
 const STYLES = {
   malicious: { box: "bg-red-500/10 border-red-500 text-red-500", Icon: ShieldAlert, label: "Malicioso" },
   suspicious: { box: "bg-yellow-500/10 border-yellow-500 text-yellow-500", Icon: AlertTriangle, label: "Sospechoso" },
   safe: { box: "bg-emerald-500/10 border-emerald-500 text-emerald-500", Icon: ShieldCheck, label: "Seguro" },
+  error: { box: "bg-gray-500/10 border-gray-500 text-gray-400", Icon: CircleHelp, label: "Sin veredicto" },
 } as const;
 
 const PILLS = {
   malicious: "border-red-500/50 bg-red-500/15 text-red-500",
   suspicious: "border-yellow-500/50 bg-yellow-500/15 text-yellow-500",
   safe: "border-emerald-500/50 bg-emerald-500/15 text-emerald-500",
+  error: "border-gray-500/50 bg-gray-500/15 text-gray-400",
 } as const;
 
 export function RiskBanner({

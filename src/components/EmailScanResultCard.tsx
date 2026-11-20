@@ -1,11 +1,13 @@
 import { AlertTriangle, CircleCheck, CircleMinus, CircleX } from "lucide-react";
 import type { AuthStatus, ScanResult } from "@/lib/types";
+import { getEmailData } from "@/lib/scan";
 import { RiskBanner, RiskPill } from "./RiskBanner";
 
 const COPY = {
   malicious: { title: "Correo malicioso / Phishing confirmado", sub: "Este correo intenta suplantar a un remitente legítimo e incluye enlaces peligrosos." },
   suspicious: { title: "Correo sospechoso / Origen dudoso", sub: "El remitente no tiene registros de autenticación completos. Revisa antes de abrir enlaces." },
   safe: { title: "Correo seguro / Ninguna amenaza detectada", sub: "El remitente está autenticado y ningún enlace fue reportado como peligroso." },
+  error: { title: "Sin veredicto / No se pudo analizar", sub: "Los servicios de análisis no respondieron. Inténtalo de nuevo en unos minutos." },
 } as const;
 
 const AUTH_STYLE: Record<AuthStatus, { cls: string; Icon: typeof CircleCheck; label: string }> = {
@@ -13,6 +15,10 @@ const AUTH_STYLE: Record<AuthStatus, { cls: string; Icon: typeof CircleCheck; la
   fail: { cls: "border-red-500/50 bg-red-500/15 text-red-500", Icon: CircleX, label: "Fail" },
   softfail: { cls: "border-red-500/50 bg-red-500/15 text-red-500", Icon: CircleX, label: "Softfail" },
   none: { cls: "border-gray-500/50 bg-gray-500/15 text-gray-500", Icon: CircleMinus, label: "Ninguno" },
+  neutral: { cls: "border-gray-500/50 bg-gray-500/15 text-gray-500", Icon: CircleMinus, label: "Neutral" },
+  temperror: { cls: "border-gray-500/50 bg-gray-500/15 text-gray-500", Icon: CircleMinus, label: "Error temporal" },
+  permerror: { cls: "border-gray-500/50 bg-gray-500/15 text-gray-500", Icon: CircleMinus, label: "Error de config." },
+  present_unverified: { cls: "border-gray-500/50 bg-gray-500/15 text-gray-500", Icon: CircleMinus, label: "Sin verificar" },
 };
 
 const PROTOCOLS = [
@@ -32,9 +38,7 @@ function formatDate(raw?: string) {
 }
 
 export function EmailScanResultCard({ result }: { result: ScanResult }) {
-  const meta = result.metadata;
-  const auth = result.authentication;
-  const links = result.urls_details ?? [];
+  const { metadata: meta, authentication: auth, urls: links, urlsFound, urlsScanned } = getEmailData(result);
   const copy = COPY[result.risk_level] ?? COPY.suspicious;
   const flagged = result.risk_level === "suspicious"
     ? links.filter((l) => l.risk_level !== "safe").length
@@ -46,12 +50,12 @@ export function EmailScanResultCard({ result }: { result: ScanResult }) {
   const mismatch = !!domainOf(meta?.from) && !!domainOf(meta?.return_path) && domainOf(meta?.from) !== domainOf(meta?.return_path);
   const spoofing = mismatch && authFailed;
 
-  const rows: [string, string | undefined][] = [
+  const rows: [string, string | undefined, boolean?][] = [
     ["De (From)", meta?.from],
     ["Para (To)", meta?.to],
     ["Asunto (Subject)", meta?.subject],
     ["Fecha (Date)", formatDate(meta?.date)],
-    ["Ruta de retorno", meta?.return_path],
+    ["Ruta de retorno", meta?.return_path, mismatch], // en rojo si no coincide con el remitente
   ];
 
   return (
@@ -64,7 +68,7 @@ export function EmailScanResultCard({ result }: { result: ScanResult }) {
         <h3 className="text-base font-semibold">Autenticación del remitente (anti-spoofing)</h3>
         <div className="mt-3 grid gap-4 sm:grid-cols-3">
           {PROTOCOLS.map((p) => {
-            const st = AUTH_STYLE[(auth?.[p.key] ?? "none") as AuthStatus] ?? AUTH_STYLE.none;
+            const st = AUTH_STYLE[auth[p.key]] ?? AUTH_STYLE.none;
             return (
               <div key={p.key} className="min-h-24 rounded-lg border border-line bg-raised px-[15px] pb-2.5 pt-[11px]">
                 <p className="text-base font-semibold">{p.name}</p>
@@ -96,10 +100,12 @@ export function EmailScanResultCard({ result }: { result: ScanResult }) {
       <section className="card px-6 pb-6 pt-3.5">
         <h3 className="text-base font-semibold">Metadatos del correo</h3>
         <dl className="-mx-6 mt-3.5">
-          {rows.map(([k, v]) => (
+          {rows.map(([k, v, alert]) => (
             <div key={k} className="grid min-h-10 items-center gap-1 border-t border-line px-6 sm:grid-cols-[160px_1fr]">
               <dt className="text-sm text-muted">{k}</dt>
-              <dd className="break-all font-mono text-[13px]">{v || "—"}</dd>
+              <dd className={`break-all font-mono text-[13px] ${alert ? "font-medium text-red-500" : ""}`}>
+                {v || "—"}{alert && <span className="ml-2 font-sans text-xs">· no coincide con el remitente</span>}
+              </dd>
             </div>
           ))}
         </dl>
@@ -107,7 +113,7 @@ export function EmailScanResultCard({ result }: { result: ScanResult }) {
 
       {/* Enlaces */}
       <section className="card px-6 pb-6 pt-3.5">
-        <h3 className="text-base font-semibold">Enlaces encontrados en el correo ({links.length})</h3>
+        <h3 className="text-base font-semibold">Enlaces encontrados en el correo ({urlsFound})</h3>
         {links.length === 0 ? (
           <p className="mt-3.5 text-sm text-muted">Este correo no contiene enlaces.</p>
         ) : (
@@ -126,15 +132,19 @@ export function EmailScanResultCard({ result }: { result: ScanResult }) {
                   <tr key={i} className="h-[52px] border-t border-line">
                     <td className="pl-6 pr-4"><span className="block truncate font-mono text-xs" title={l.url}>{l.url}</span></td>
                     <td><RiskPill risk={l.risk_level} /></td>
-                    <td className={`pr-6 text-sm ${l.malicious_count > 0 ? "font-medium" : "text-muted"} ${
-                      l.malicious_count > 0 ? (l.risk_level === "malicious" ? "text-red-500" : "text-yellow-500") : ""}`}>
-                      {l.malicious_count} de 90 motores
+                    <td className={`pr-6 text-sm ${
+                      l.malicious_count > 0 || l.google_threat ? `font-medium ${l.risk_level === "malicious" ? "text-red-500" : "text-yellow-500"}` : "text-muted"}`}>
+                      {l.total_engines ? `${l.malicious_count} de ${l.total_engines} motores` : "Sin datos"}
+                      {l.google_threat && " + Google"}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        )}
+        {urlsFound > urlsScanned && (
+          <p className="mt-3 text-xs text-muted">Se analizaron {urlsScanned} de {urlsFound} enlaces.</p>
         )}
       </section>
     </div>

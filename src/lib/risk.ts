@@ -1,4 +1,4 @@
-import { AlertTriangle, ShieldAlert, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CircleHelp, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { RiskLevel } from "./types";
 
 export const RISK: Record<RiskLevel, {
@@ -16,13 +16,11 @@ export const RISK: Record<RiskLevel, {
     label: "Seguro", title: "Ninguna amenaza detectada", icon: ShieldCheck,
     text: "text-ok", border: "border-ok/50", bg: "bg-ok/10", pill: "bg-ok/15 text-ok border-ok/40",
   },
+  error: {
+    label: "Sin veredicto", title: "No se pudo completar el análisis", icon: CircleHelp,
+    text: "text-muted", border: "border-line", bg: "bg-raised", pill: "bg-raised text-muted border-line",
+  },
 };
-
-export function toDetailList(details: string | string[] | undefined): string[] {
-  if (!details) return [];
-  if (Array.isArray(details)) return details;
-  return details.split(/\n|;/).map((d) => d.trim()).filter(Boolean);
-}
 
 export function formatDate(iso?: string): string {
   if (!iso) return "—";

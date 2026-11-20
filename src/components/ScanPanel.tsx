@@ -9,7 +9,7 @@ import { getErrorMessage, scanEmail, scanUrl } from "@/lib/api";
 import type { ScanResult } from "@/lib/types";
 import { EmailScanResultCard } from "./EmailScanResultCard";
 import { UrlScanResultCard } from "./UrlScanResultCard";
-import { ResultSkeleton } from "./VerdictCard";
+import { ResultSkeleton } from "./ResultSkeleton";
 
 const urlSchema = z.object({
   url: z.string().trim().min(1, "Pega un enlace").url("Incluye el protocolo, por ejemplo https://..."),

@@ -1,16 +1,17 @@
 "use client";
 import { useState } from "react";
 import { Check, Copy } from "lucide-react";
-import type { EngineStats, ScanResult } from "@/lib/types";
+import type { ScanResult } from "@/lib/types";
+import { getGoogle, getVirusTotal, getVtRisk, threatLabels } from "@/lib/scan";
+import { EngineSourceCard, type Tone } from "./EngineSourceCard";
 import { RiskBanner } from "./RiskBanner";
 
 const COPY = {
   malicious: { title: "Sitio malicioso / Phishing confirmado", sub: "Este enlace fue marcado como peligroso por varios motores. No lo abras ni ingreses datos." },
   suspicious: { title: "Sitio sospechoso / Procede con precaución", sub: "Algunos motores lo marcan como dudoso. Evita ingresar datos personales." },
   safe: { title: "Sitio seguro / Ninguna amenaza detectada", sub: "Ningún motor de seguridad reportó este enlace como peligroso." },
+  error: { title: "Sin veredicto / No se pudo analizar", sub: "Los servicios de análisis no respondieron. Inténtalo de nuevo en unos minutos." },
 } as const;
-
-const EMPTY: EngineStats = { malicious: 0, suspicious: 0, harmless: 0, undetected: 0 };
 
 const COUNTERS = [
   { key: "malicious", label: "Maliciosos", bar: "bg-red-500", text: "text-red-500" },
@@ -21,9 +22,26 @@ const COUNTERS = [
 
 export function UrlScanResultCard({ result }: { result: ScanResult }) {
   const [copied, setCopied] = useState(false);
-  const stats = result.stats ?? EMPTY;
-  const total = COUNTERS.reduce((sum, c) => sum + stats[c.key], 0);
-  const flagged = result.risk_level === "suspicious" ? stats.suspicious : stats.malicious;
+  const vt = getVirusTotal(result);
+  const google = getGoogle(result);
+  const total = vt ? COUNTERS.reduce((sum, c) => sum + vt[c.key], 0) : 0;
+  const vtFlagged = vt ? (result.risk_level === "suspicious" ? vt.suspicious : vt.malicious) : 0;
+  // Google Safe Browsing cuenta como un motor más en el contador del banner
+  const bannerTotal = total + (google.state === "unavailable" ? 0 : 1);
+  const bannerFlagged = vtFlagged + (google.state === "threat" ? 1 : 0);
+
+  // Estado de cada fuente (cada motor se evalúa por separado)
+  const vtRisk = getVtRisk(result); // veredicto que calculó el backend para VirusTotal
+  const vtTone: Tone = !vt ? "neutral"
+    : vtRisk ?? (vt.malicious > 0 ? "malicious" : vt.suspicious > 0 ? "suspicious" : "safe");
+  const vtMessage = !vt ? "Sin respuesta de VirusTotal"
+    : vt.malicious > 0 ? `${vt.malicious} de ${total} motores lo marcan como malicioso`
+    : vt.suspicious > 0 ? `${vt.suspicious} de ${total} motores lo marcan como sospechoso`
+    : `Ningún motor lo marcó como peligroso (${total} consultados)`;
+  const gTone: Tone = google.state === "threat" ? "malicious" : google.state === "safe" ? "safe" : "neutral";
+  const gMessage = google.state === "threat" ? "Amenazas detectadas por Google"
+    : google.state === "safe" ? "Sin amenazas detectadas"
+    : "Sin respuesta de Google Safe Browsing";
   const copy = COPY[result.risk_level] ?? COPY.suspicious;
 
   async function copyUrl() {
@@ -43,9 +61,17 @@ export function UrlScanResultCard({ result }: { result: ScanResult }) {
 
   return (
     <div className="space-y-6">
-      <RiskBanner risk={result.risk_level} title={copy.title} subtitle={copy.sub} big={`${flagged}/${total}`} small="motores lo detectan" />
+      <RiskBanner risk={result.risk_level} title={copy.title} subtitle={copy.sub} big={bannerTotal ? `${bannerFlagged}/${bannerTotal}` : "—"} small="motores lo detectan" />
 
-      {/* Detección por motores */}
+      {/* Una tarjeta por fuente de análisis */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <EngineSourceCard name="VirusTotal" tone={vtTone} message={vtMessage} />
+        <EngineSourceCard name="Google Safe Browsing" tone={gTone} message={gMessage}
+          chips={google.state === "threat" ? threatLabels(google.threats) : []} />
+      </div>
+
+      {/* Detección por motores (VirusTotal) */}
+      {vt && (
       <section className="card px-6 pb-6 pt-4">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4">
           <h3 className="text-base font-semibold">Detección por motores de seguridad</h3>
@@ -53,9 +79,9 @@ export function UrlScanResultCard({ result }: { result: ScanResult }) {
         </div>
 
         <div className="mt-3 flex h-4 gap-0.5" role="img"
-          aria-label={`${stats.malicious} maliciosos, ${stats.suspicious} sospechosos, ${stats.harmless} inofensivos, ${stats.undetected} sin detectar`}>
-          {COUNTERS.map((c) => stats[c.key] > 0 && (
-            <div key={c.key} className={`rounded ${c.bar}`} style={{ flexGrow: stats[c.key], flexBasis: 0 }} />
+          aria-label={`${vt.malicious} maliciosos, ${vt.suspicious} sospechosos, ${vt.harmless} inofensivos, ${vt.undetected} sin detectar`}>
+          {COUNTERS.map((c) => vt[c.key] > 0 && (
+            <div key={c.key} className={`rounded ${c.bar}`} style={{ flexGrow: vt[c.key], flexBasis: 0 }} />
           ))}
         </div>
 
@@ -66,13 +92,14 @@ export function UrlScanResultCard({ result }: { result: ScanResult }) {
                 <span className={`h-2.5 w-2.5 rounded-full ${c.bar}`} aria-hidden /> {c.label}
               </p>
               <div className="mt-2.5 flex items-baseline justify-between">
-                <span className={`font-mono text-[28px] font-semibold leading-7 ${c.text}`}>{stats[c.key]}</span>
-                <span className="text-xs text-muted">{total ? Math.round((stats[c.key] / total) * 100) : 0}%</span>
+                <span className={`font-mono text-[28px] font-semibold leading-7 ${c.text}`}>{vt[c.key]}</span>
+                <span className="text-xs text-muted">{total ? Math.round((vt[c.key] / total) * 100) : 0}%</span>
               </div>
             </div>
           ))}
         </div>
       </section>
+      )}
 
       {/* URL analizada */}
       <section className="card px-6 pb-8 pt-4">
