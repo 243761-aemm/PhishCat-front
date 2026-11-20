@@ -7,7 +7,9 @@ import { z } from "zod";
 import { AlertCircle, FileText, Link2, Loader2, Mail, Search, UploadCloud, X } from "lucide-react";
 import { getErrorMessage, scanEmail, scanUrl } from "@/lib/api";
 import type { ScanResult } from "@/lib/types";
-import { ResultSkeleton, VerdictCard } from "./VerdictCard";
+import { EmailScanResultCard } from "./EmailScanResultCard";
+import { UrlScanResultCard } from "./UrlScanResultCard";
+import { ResultSkeleton } from "./VerdictCard";
 
 const urlSchema = z.object({
   url: z.string().trim().min(1, "Pega un enlace").url("Incluye el protocolo, por ejemplo https://..."),
@@ -22,7 +24,7 @@ export function ScanPanel() {
   const [fileError, setFileError] = useState<string | null>(null);
   const loading = phase.s === "loading";
 
-  const { register, handleSubmit, formState: { errors } } = useForm<UrlForm>({ resolver: zodResolver(urlSchema) });
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<UrlForm>({ resolver: zodResolver(urlSchema) });
 
   const dz = useDropzone({
     accept: { "message/rfc822": [".eml"], "application/octet-stream": [".eml"] },
@@ -38,6 +40,33 @@ export function ScanPanel() {
     catch (e) { setPhase({ s: "error", msg: getErrorMessage(e, "No pudimos completar el análisis.") }); }
   }
 
+  function newScan() {
+    setPhase({ s: "idle" });
+    setFile(null);
+    reset();
+  }
+
+  // Pantalla de resultados
+  if (phase.s === "done") {
+    const { result } = phase;
+    return (
+      <div>
+        <div className="mb-[19px] flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold">Resultado del análisis</h1>
+            <p className="mt-0.5 text-sm text-muted">
+              {result.scan_type === "email" ? `Correo · ${result.target}` : "Enlace · analizado hace unos segundos"}
+            </p>
+          </div>
+          <button onClick={newScan} className="mt-px h-9 w-[140px] rounded-md border border-line text-sm text-muted transition hover:text-fg">
+            Nuevo análisis
+          </button>
+        </div>
+        {result.scan_type === "email" ? <EmailScanResultCard result={result} /> : <UrlScanResultCard result={result} />}
+      </div>
+    );
+  }
+
   const tabBtn = (id: "url" | "email", label: string, Icon: typeof Link2) => (
     <button
       role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
@@ -50,6 +79,11 @@ export function ScanPanel() {
 
   return (
     <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">¿Algo te parece raro?</h1>
+        <p className="mt-1 text-sm text-muted">Analiza un enlace o un correo y te decimos si es seguro abrirlo.</p>
+      </div>
+
       <div className="card">
         <div role="tablist" className="flex border-b border-line px-2">
           {tabBtn("url", "Analizar URL", Link2)}
@@ -103,7 +137,6 @@ export function ScanPanel() {
       </div>
 
       {phase.s === "loading" && <ResultSkeleton />}
-      {phase.s === "done" && <VerdictCard result={phase.result} />}
       {phase.s === "error" && (
         <div role="alert" className="flex items-start gap-2 rounded-md border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
           <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden /> {phase.msg}

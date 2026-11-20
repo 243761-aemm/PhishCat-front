@@ -24,7 +24,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Navbar />
-      <main className="mx-auto w-full max-w-4xl px-4 py-10">{children}</main>
+      <main className="mx-auto w-full max-w-[928px] px-4 pb-10 pt-[46px]">{children}</main>
     </>
   );
 }

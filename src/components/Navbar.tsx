@@ -17,7 +17,7 @@ export function Navbar() {
 
   return (
     <header className="border-b border-line bg-surface/80 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-4xl items-center justify-between px-4">
+      <div className="mx-auto flex h-14 max-w-[928px] items-center justify-between px-4">
         <div className="flex items-center gap-6">
           <Link href="/dashboard"><Logo /></Link>
           <nav className="flex gap-1">

@@ -1,6 +1,6 @@
 import axios, { AxiosError, AxiosResponse } from "axios";
 import { useAuth } from "@/store/auth";
-import type { RiskLevel, ScanResult } from "./types";
+import type { EmailAuth, EmailMetadata, EmbeddedUrl, EngineStats, RiskLevel, ScanResult } from "./types";
 
 /**
  * MODO DEMO: simula el backend en el navegador (sin servidor).
@@ -49,7 +49,6 @@ export function getErrorMessage(error: unknown, fallback = "Algo salió mal. Int
 const DEMO_USER = { email: "demo@phishcatch.com", password: "demo1234" };
 const USERS_KEY = "phishcatch-mock-users";
 const historyKey = (email: string) => `phishcatch-mock-history:${email}`;
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function mockError(status: number, detail: string): AxiosError {
@@ -74,17 +73,14 @@ function writeJson(key: string, value: unknown) {
 }
 
 const getUsers = () => readJson<Record<string, string>>(USERS_KEY, {});
-
-function ago(minutes: number) {
-  return new Date(Date.now() - minutes * 60_000).toISOString();
-}
+const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
 function seedHistory(): ScanResult[] {
   return [
-    { id: 1, target: "https://secure-paypal-verify.xyz/login", scan_type: "url", risk_level: "malicious", details: "Dominio reportado en VirusTotal", created_at: ago(25) },
-    { id: 2, target: "factura-octubre.eml", scan_type: "email", risk_level: "suspicious", details: "Sin registros de seguridad en el correo", created_at: ago(60 * 5) },
-    { id: 3, target: "https://www.wikipedia.org", scan_type: "url", risk_level: "safe", details: "URL limpia en motores de búsqueda", created_at: ago(60 * 30) },
-    { id: 4, target: "https://bit.ly/3xYz9Qk", scan_type: "url", risk_level: "suspicious", details: "Enlace acortado que oculta el destino", created_at: ago(60 * 24 * 9) },
+    { id: 1, target: "https://secure-paypal-verify.xyz/login", scan_type: "url", risk_level: "malicious", created_at: ago(25) },
+    { id: 2, target: "factura-octubre.eml", scan_type: "email", risk_level: "suspicious", created_at: ago(60 * 5) },
+    { id: 3, target: "https://www.wikipedia.org", scan_type: "url", risk_level: "safe", created_at: ago(60 * 30) },
+    { id: 4, target: "https://bit.ly/3xYz9Qk", scan_type: "url", risk_level: "suspicious", created_at: ago(60 * 24 * 9) },
   ];
 }
 
@@ -105,12 +101,6 @@ function saveToHistory(result: ScanResult): ScanResult {
   return entry;
 }
 
-const MOCK_DETAILS: Record<RiskLevel, string[]> = {
-  malicious: ["Dominio reportado en VirusTotal", "Enlace de suplantación bancaria", "Registrado hace menos de 24 horas"],
-  suspicious: ["Dominio creado hace menos de 24 horas", "Sin registros de seguridad en el correo", "El destino final no coincide con el texto del enlace"],
-  safe: ["URL limpia en motores de búsqueda", "Certificado HTTPS válido", "Firmas del correo válidas"],
-};
-
 function judgeUrl(url: string): RiskLevel {
   const u = url.toLowerCase();
   if (/(phish|paypal|banco|verify|secure-|login|\.ru|\.zip)/.test(u)) return "malicious";
@@ -126,6 +116,41 @@ function judgeFile(name: string): RiskLevel {
   const order: RiskLevel[] = ["safe", "suspicious", "malicious"];
   return order[name.length % 3];
 }
+
+const MOCK_STATS: Record<RiskLevel, EngineStats> = {
+  malicious: { malicious: 8, suspicious: 3, harmless: 61, undetected: 18 },
+  suspicious: { malicious: 0, suspicious: 4, harmless: 58, undetected: 28 },
+  safe: { malicious: 0, suspicious: 0, harmless: 72, undetected: 18 },
+};
+
+const MOCK_EMAIL: Record<RiskLevel, { metadata: EmailMetadata; authentication: EmailAuth; urls_details: EmbeddedUrl[] }> = {
+  malicious: {
+    metadata: { from: "PayPal Soporte <soporte@paypal.com>", to: "usuario@correo.com", subject: "Urgente: verifica tu cuenta en las próximas 24 horas", date: "Mié, 28 oct 2026 09:14 (UTC−6)", return_path: "mailer@srv-4821.xyz" },
+    authentication: { spf: "fail", dkim: "fail", dmarc: "fail" },
+    urls_details: [
+      { url: "https://paypal-secure-login.xyz/verify?id=48213", risk_level: "malicious", malicious_count: 8 },
+      { url: "https://bit.ly/3xYz9Qk", risk_level: "suspicious", malicious_count: 2 },
+      { url: "https://www.paypal.com/help", risk_level: "safe", malicious_count: 0 },
+    ],
+  },
+  suspicious: {
+    metadata: { from: "Ofertas Tienda <promo@promos-ofertas.top>", to: "usuario@correo.com", subject: "Solo hoy: 70% de descuento en toda la tienda", date: "Mié, 28 oct 2026 09:14 (UTC−6)", return_path: "promo@promos-ofertas.top" },
+    authentication: { spf: "none", dkim: "pass", dmarc: "none" },
+    urls_details: [
+      { url: "http://tracking.promos-ofertas.top/click?ref=a81", risk_level: "suspicious", malicious_count: 3 },
+      { url: "https://www.tienda.com/ofertas", risk_level: "safe", malicious_count: 0 },
+      { url: "https://bit.ly/4abCdEf", risk_level: "suspicious", malicious_count: 1 },
+    ],
+  },
+  safe: {
+    metadata: { from: "Banco Ejemplo <avisos@bancoejemplo.com>", to: "usuario@correo.com", subject: "Tu estado de cuenta de octubre ya está disponible", date: "Mié, 28 oct 2026 09:14 (UTC−6)", return_path: "avisos@bancoejemplo.com" },
+    authentication: { spf: "pass", dkim: "pass", dmarc: "pass" },
+    urls_details: [
+      { url: "https://www.bancoejemplo.com/estado-cuenta", risk_level: "safe", malicious_count: 0 },
+      { url: "https://www.bancoejemplo.com/ayuda", risk_level: "safe", malicious_count: 0 },
+    ],
+  },
+};
 
 /* ------------------------------------------------------------------ */
 /*  Servicios                                                          */
@@ -160,7 +185,7 @@ export async function scanUrl(url: string) {
   if (USE_MOCK) {
     await sleep(2000);
     const risk = judgeUrl(url);
-    return saveToHistory({ target: url, scan_type: "url", risk_level: risk, details: MOCK_DETAILS[risk] });
+    return saveToHistory({ target: url, scan_type: "url", risk_level: risk, stats: MOCK_STATS[risk] });
   }
   const { data } = await api.post<ScanResult>("/scan/url", { url });
   return data;
@@ -170,7 +195,15 @@ export async function scanEmail(file: File) {
   if (USE_MOCK) {
     await sleep(2000);
     const risk = judgeFile(file.name);
-    return saveToHistory({ target: file.name, scan_type: "email", risk_level: risk, details: MOCK_DETAILS[risk] });
+    const m = MOCK_EMAIL[risk];
+    return saveToHistory({
+      target: file.name,
+      scan_type: "email",
+      risk_level: risk,
+      metadata: m.metadata,
+      authentication: m.authentication,
+      urls_details: m.urls_details,
+    });
   }
   const form = new FormData();
   form.append("file", file);
