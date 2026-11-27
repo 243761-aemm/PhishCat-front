@@ -138,6 +138,12 @@ function judgeFile(name: string): RiskLevel {
   return order[name.length % 3];
 }
 
+function judgeText(text: string): RiskLevel {
+  if (/spf=fail|received-spf:\s*fail/i.test(text)) return "malicious";
+  if (/urgente|verifica|suspend/i.test(text)) return "suspicious";
+  return "safe";
+}
+
 const MOCK_STATS: Record<RiskLevel, EngineStats> = {
   malicious: { malicious: 8, suspicious: 3, harmless: 61, undetected: 18 },
   suspicious: { malicious: 0, suspicious: 4, harmless: 58, undetected: 28 },
@@ -237,6 +243,18 @@ export async function scanEmail(file: File) {
   const form = new FormData();
   form.append("file", file);
   const { data } = await api.post<ScanResult>("/scan/email", form, { timeout: SCAN_TIMEOUT });
+  return normalize(data);
+}
+
+/** Correo pegado como texto ("Mostrar original" de Gmail/Outlook) */
+export async function scanEmailText(rawEmail: string) {
+  if (USE_MOCK) {
+    await sleep(2000);
+    const risk = judgeText(rawEmail);
+    const subject = rawEmail.match(/^Subject:\s*(.+)$/im)?.[1]?.trim() ?? "correo_texto_original";
+    return saveToHistory({ target: `raw_email:${subject}`, scan_type: "email", risk_level: risk, details: MOCK_EMAIL[risk] });
+  }
+  const { data } = await api.post<ScanResult>("/scan/email/text", { raw_email: rawEmail }, { timeout: SCAN_TIMEOUT });
   return normalize(data);
 }
 

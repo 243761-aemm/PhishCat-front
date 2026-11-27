@@ -4,8 +4,9 @@ import { useDropzone } from "react-dropzone";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { AlertCircle, FileText, Link2, Loader2, Mail, Search, UploadCloud, X } from "lucide-react";
-import { getErrorMessage, scanEmail, scanUrl } from "@/lib/api";
+import { AlertCircle, ClipboardPaste, FileText, Link2, Loader2, Mail, Search, UploadCloud, X } from "lucide-react";
+import { getErrorMessage, scanEmail, scanEmailText, scanUrl } from "@/lib/api";
+import { cleanTarget, isRawTarget } from "@/lib/scan";
 import type { ScanResult } from "@/lib/types";
 import { EmailScanResultCard } from "./EmailScanResultCard";
 import { UrlScanResultCard } from "./UrlScanResultCard";
@@ -15,6 +16,7 @@ const urlSchema = z.object({
   url: z.string().trim().min(1, "Pega un enlace").url("Incluye el protocolo, por ejemplo https://..."),
 });
 type UrlForm = z.infer<typeof urlSchema>;
+const MAX_BYTES = 10 * 1024 * 1024;
 type Phase = { s: "idle" } | { s: "loading" } | { s: "done"; result: ScanResult } | { s: "error"; msg: string };
 
 export function ScanPanel() {
@@ -22,6 +24,9 @@ export function ScanPanel() {
   const [phase, setPhase] = useState<Phase>({ s: "idle" });
   const [file, setFile] = useState<File | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [emailMode, setEmailMode] = useState<"file" | "text">("file");
+  const [rawText, setRawText] = useState("");
+  const tooBig = rawText.length > MAX_BYTES;
   const loading = phase.s === "loading";
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<UrlForm>({ resolver: zodResolver(urlSchema) });
@@ -43,6 +48,7 @@ export function ScanPanel() {
   function newScan() {
     setPhase({ s: "idle" });
     setFile(null);
+    setRawText("");
     reset();
   }
 
@@ -55,7 +61,9 @@ export function ScanPanel() {
           <div>
             <h1 className="text-2xl font-semibold">Resultado del análisis</h1>
             <p className="mt-0.5 text-sm text-muted">
-              {result.scan_type === "email" ? `Correo · ${result.target}` : "Enlace · analizado hace unos segundos"}
+              {result.scan_type === "email"
+                ? `Correo · ${isRawTarget(result.target) ? "texto pegado · " : ""}${cleanTarget(result.target)}`
+                : "Enlace · analizado hace unos segundos"}
             </p>
           </div>
           <button onClick={newScan} className="mt-px h-9 w-[140px] rounded-md border border-line text-sm text-muted transition hover:text-fg">
@@ -108,29 +116,66 @@ export function ScanPanel() {
             </form>
           ) : (
             <div className="space-y-4">
-              <div
-                {...dz.getRootProps()}
-                className={`flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed px-6 py-10 text-center transition ${
-                  dz.isDragActive ? "border-brand bg-brand/5" : "border-line hover:border-muted"}`}
-              >
-                <input {...dz.getInputProps()} aria-label="Archivo .eml" />
-                <UploadCloud size={36} className="text-muted" aria-hidden />
-                <p className="text-sm">Arrastra tu archivo .eml aquí o haz clic para buscar</p>
-                <p className="text-xs text-muted">Máximo 10 MB</p>
+              <div role="group" aria-label="Forma de enviar el correo" className="inline-flex rounded-md border border-line bg-bg p-0.5 text-sm">
+                {(["file", "text"] as const).map((m) => (
+                  <button key={m} type="button" aria-pressed={emailMode === m} onClick={() => setEmailMode(m)}
+                    className={`inline-flex items-center gap-2 rounded px-3 py-1.5 transition ${
+                      emailMode === m ? "bg-raised text-fg" : "text-muted hover:text-fg"}`}>
+                    {m === "file" ? <FileText size={14} aria-hidden /> : <ClipboardPaste size={14} aria-hidden />}
+                    {m === "file" ? "Subir archivo .eml" : "Pegar texto original"}
+                  </button>
+                ))}
               </div>
-              {fileError && <p className="text-xs text-danger">{fileError}</p>}
-              {file && (
-                <div className="flex items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2 text-sm">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <FileText size={16} className="shrink-0 text-brand" aria-hidden />
-                    <span className="truncate font-mono text-xs">{file.name}</span>
-                  </span>
-                  <button onClick={() => setFile(null)} aria-label="Quitar archivo" className="text-muted hover:text-fg"><X size={16} /></button>
+
+              {emailMode === "file" ? (
+                <div className="space-y-4">
+                <div
+                  {...dz.getRootProps()}
+                  className={`flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed px-6 py-10 text-center transition ${
+                    dz.isDragActive ? "border-brand bg-brand/5" : "border-line hover:border-muted"}`}
+                >
+                  <input {...dz.getInputProps()} aria-label="Archivo .eml" />
+                  <UploadCloud size={36} className="text-muted" aria-hidden />
+                  <p className="text-sm">Arrastra tu archivo .eml aquí o haz clic para buscar</p>
+                  <p className="text-xs text-muted">Máximo 10 MB</p>
+                </div>
+                {fileError && <p className="text-xs text-danger">{fileError}</p>}
+                {file && (
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-line bg-raised px-3 py-2 text-sm">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <FileText size={16} className="shrink-0 text-brand" aria-hidden />
+                      <span className="truncate font-mono text-xs">{file.name}</span>
+                    </span>
+                    <button onClick={() => setFile(null)} aria-label="Quitar archivo" className="text-muted hover:text-fg"><X size={16} /></button>
+                  </div>
+                )}
+                <button disabled={!file || loading} onClick={() => file && run(() => scanEmail(file))} className="btn w-full py-3">
+                  {loading && <Loader2 size={16} className="animate-spin" aria-hidden />} Analizar archivo
+                </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <textarea
+                    value={rawText} onChange={(e) => setRawText(e.target.value)} spellCheck={false}
+                    aria-label="Texto original del correo"
+                    placeholder={"Delivered-To: tu@correo.com\nReceived: from ...\nFrom: ...\nSubject: ...\n\nPega aquí el texto completo de «Mostrar original»"}
+                    className="input h-64 resize-y font-mono text-xs leading-5"
+                  />
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+                    <p>Gmail: ⋮ → Mostrar original → Copiar al portapapeles. Outlook: Ver origen del mensaje.</p>
+                    {rawText && (
+                      <span className="flex items-center gap-3">
+                        {Math.max(1, Math.round(rawText.length / 1024))} KB
+                        <button type="button" onClick={() => setRawText("")} className="hover:text-fg">Borrar</button>
+                      </span>
+                    )}
+                  </div>
+                  {tooBig && <p className="text-xs text-danger">El texto excede el máximo de 10 MB.</p>}
+                  <button disabled={!rawText.trim() || tooBig || loading} onClick={() => run(() => scanEmailText(rawText))} className="btn w-full py-3">
+                    {loading && <Loader2 size={16} className="animate-spin" aria-hidden />} Analizar texto
+                  </button>
                 </div>
               )}
-              <button disabled={!file || loading} onClick={() => file && run(() => scanEmail(file))} className="btn w-full py-3">
-                {loading && <Loader2 size={16} className="animate-spin" aria-hidden />} Analizar archivo
-              </button>
             </div>
           )}
         </div>

@@ -103,3 +103,7 @@ export function getEmailData(r: ScanResult): {
     urlsScanned: d.urls_scanned ?? urls.length,
   };
 }
+
+/* El backend guarda los correos pegados como "raw_email:<asunto>" */
+export const isRawTarget = (t: string) => t.startsWith("raw_email:");
+export const cleanTarget = (t: string) => (isRawTarget(t) ? t.slice("raw_email:".length) : t);

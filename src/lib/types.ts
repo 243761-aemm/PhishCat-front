@@ -54,6 +54,7 @@ export interface EmbeddedUrl {
 
 /** details ahora es un objeto multimotor */
 export interface ScanDetails {
+  input_mode?: string; // "eml_file" | "raw_text" (solo correos)
   virustotal?: (Partial<EngineStats> & {
     risk_level?: string;
     stats?: Partial<EngineStats>;

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AlertCircle, Link2, Mail, SearchX } from "lucide-react";
 import { AuthGuard } from "@/components/AuthGuard";
 import { getErrorMessage, getHistory } from "@/lib/api";
+import { cleanTarget } from "@/lib/scan";
 import { RISK, formatDate } from "@/lib/risk";
 import type { ScanResult } from "@/lib/types";
 
@@ -57,7 +58,7 @@ export default function HistoryPage() {
                 return (
                   <tr key={it.id ?? i}>
                     <td className="whitespace-nowrap px-4 py-3 text-muted">{formatDate(it.created_at)}</td>
-                    <td className="max-w-[280px] px-4 py-3"><span className="block truncate font-mono text-xs" title={it.target}>{it.target}</span></td>
+                    <td className="max-w-[280px] px-4 py-3"><span className="block truncate font-mono text-xs" title={cleanTarget(it.target)}>{cleanTarget(it.target)}</span></td>
                     <td className="px-4 py-3">
                       <span className="inline-flex items-center gap-1.5 text-muted">
                         {isUrl ? <Link2 size={14} aria-hidden /> : <Mail size={14} aria-hidden />}
